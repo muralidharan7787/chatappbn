@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Private Chat App</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    input, button { margin: 5px; }
+    ul { list-style-type: none; padding: 0; }
+    li { background: #f1f1f1; margin-bottom: 5px; padding: 8px; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <h2>Private Chat</h2>
+
+  <div>
+    <label>Your User ID:</label>
+    <input type="text" id="userId" placeholder="e.g., user1" />
+    <button onclick="registerUser()">Register</button>
+  </div>
+
+  <div>
+    <label>Send to:</label>
+    <input type="text" id="targetId" placeholder="Recipient ID" />
+    <input type="text" id="messageInput" placeholder="Your message..." />
+    <button onclick="sendPrivateMessage()">Send</button>
+  </div>
+
+  <h3>Messages</h3>
+  <ul id="messages"></ul>
+
+  <script>
+    const socket = io();
+    let myUserId = '';
+
+    function registerUser() {
+      const input = document.getElementById('userId');
+      myUserId = input.value.trim();
+      if (myUserId) {
+        socket.emit('register', myUserId);
+        log(`✅ Registered as ${myUserId}`);
+      }
+    }
+
+    function sendPrivateMessage() {
+      const targetId = document.getElementById('targetId').value.trim();
+      const message = document.getElementById('messageInput').value.trim();
+
+      if (targetId && message) {
+        socket.emit('private_message', {
+          to: targetId,
+          from: myUserId,
+          message: message
+        });
+        log(`🟡 You to ${targetId}: ${message}`);
+      }
+    }
+
+    function log(msg) {
+      const li = document.createElement('li');
+      li.textContent = msg;
+      document.getElementById('messages').appendChild(li);
+    }
+
+    socket.on('private_message', (data) => {
+      const { from, message } = data;
+      log(`🔵 ${from} to You: ${message}`);
+    });
+  </script>
+</body>
+</html>
