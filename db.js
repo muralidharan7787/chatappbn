@@ -1,16 +1,27 @@
-const mysql = require('mysql');
-console.log("server started succesfully from db");
+const sql = require('mssql');
+require('dotenv').config();
 
-const db = mysql.createConnection({
-    host: 'localhost',
-    user: 'root',
-    password: '',
-    database: 'test',
-});
 
-db.connect((err)=>{
-    if(err) throw err;
-    console.log('MySql Connected');
-});
+const config = {
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,  // 🔐 Replace with actual password
+    server: process.env.DB_SERVER,
+    database: process.env.DB_DATABASE,
+    port: Number(process.env.DB_PORT),
+    options: {
+        encrypt: true, // ✅ for Azure
+        trustServerCertificate: false,
+    }
+};
 
-module.exports = db;
+sql.connect(config)
+  .then(pool => {
+    console.log('SQL Server Connected ✅');
+    // You can use pool.request() to run queries now
+    return pool;
+  })
+  .catch(err => {
+    console.error('❌ SQL Connection Error:', err);
+  });
+
+module.exports = sql;
