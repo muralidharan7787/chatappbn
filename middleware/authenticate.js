@@ -14,8 +14,10 @@ const authenticate = (req, res, next) => {
     // Verify the token using the secret key
     const decoded = jwt.verify(token, secretKey);
     req.user = decoded; // Attach the decoded token to the request
+    console.log('before the auth completion');
     console.log(req.user);
-    next(); // Call the next middleware or route handler
+    next(); 
+    console.log('after the auth completion');// Call the next middleware or route handler
   } catch (error) {
     return res.status(400).json({ message: 'Invalid or expired token' });
   }

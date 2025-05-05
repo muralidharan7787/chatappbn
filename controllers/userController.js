@@ -25,14 +25,18 @@ exports.getProfileUser = async (req, res) => {
         if (err) return res.status(500).json({ error: 'Error Getting Profile Data' });
 
         if (results.length > 0) {
+            console.log("Profile Fetched and the details are");
+            console.log(results[0]);
             return res.status(200).json({results:results[0]});
         }
     });
 };
 
 exports.updateProfileUser = async (req, res) => {
-    const user_id = req.user_id;
-    let { name, email, username, phone_number, is_online } = req.body;
+    const user_id = req.user.user_id;
+    console.log('inside the update controller');
+    console.log(user_id);
+    let { name, email, username, phone_number, is_online, status_message } = req.body;
 
     try {
         // Convert is_online to MSSQL BIT (0/1)
@@ -42,6 +46,7 @@ exports.updateProfileUser = async (req, res) => {
 
         // 1. Check user exists
         userModel.getProfileData(user_id, async (err, results) => {
+            console.log(results);
             if (err) return res.status(500).json({ error: 'Database error' });
             if (!Array.isArray(results) || results.length === 0) {
                 return res.status(401).json({ error: `User not exists` });
@@ -65,7 +70,7 @@ exports.updateProfileUser = async (req, res) => {
                 }
 
                 // 3. Update fields
-                const fieldsToUpdate = { name, email, username, phone_number, is_online };
+                const fieldsToUpdate = { name, email, username, phone_number, is_online, status_message };
                 userModel.updateProfile(user_id, fieldsToUpdate, (err, result) => {
                     if (err) return res.status(500).json({ error: 'Failed to update user profile' });
                     return res.status(200).json({ message: 'User profile updated successfully' });

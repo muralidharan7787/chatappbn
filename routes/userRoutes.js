@@ -14,7 +14,7 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname);
-    cb(null, Date.now() + ext);
+    cb(null, req.user.user_id + ext);
   }
 });
 
@@ -26,18 +26,18 @@ routes.post('/update-profile', authenticate, userController.updateProfileUser);
 routes.get('/get-profile', authenticate, userController.getProfileUser);
 routes.post('/upload-profile', authenticate, upload.single('image'), async (req, res) => {
   if (!req.file) {
+    // console.log('containing file');
     return res.status(400).json({ error: 'No image uploaded' });
   }
-
+  console.log('containing file');
   const user_id = req.user.user_id; // from token
   const imagePath = req.file.path; // e.g. 'uploads/168...jpg'
 
   try {
-    const pool = await sql;
-    const result = await pool.request()
-      .input('user_id', sql.Int, user_id)
-      .input('profile_image', sql.NVarChar, imagePath)
-      .query('UPDATE users SET profile_image = @profile_image WHERE id = @user_id');
+    const request = new sql.Request();
+      request.input('user_id', sql.Int, user_id)
+      request.input('profile_image', sql.NVarChar, imagePath)
+      request.query('UPDATE users SET profile_image = @profile_image WHERE id = @user_id');
     
     res.status(200).json({ message: 'Profile image uploaded', image_url: imagePath });
   } catch (err) {

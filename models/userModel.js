@@ -8,6 +8,7 @@ const userModel = {
             const request = new sql.Request();
             request.input('user_id', sql.Int, user_id);
             const result = await request.query('SELECT * FROM users WHERE id = @user_id');
+            console.log(result);
             callback(null, result.recordset);
         } catch (err) {
             callback(err, null);

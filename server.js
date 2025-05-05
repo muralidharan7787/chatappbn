@@ -29,10 +29,19 @@ app.get('/messages/:user1/:user2', async (req, res) => {
   const { user1, user2 } = req.params;
 
   try {
-    // Connect to SQL Server
-    let pool = await sql.connect(dbConfig);
+    const pool = await sql.connect(dbConfig);
 
-    // SQL query to get messages between user1 and user2
+    // Step 1: Update messages from user2 to user1 to 'read'
+    await pool.request()
+      .input('sender_id', sql.Int, user2)
+      .input('receiver_id', sql.Int, user1)
+      .query(`
+        UPDATE messages
+        SET status = 'read'
+        WHERE sender_id = @sender_id AND receiver_id = @receiver_id AND status != 'read'
+      `);
+
+    // Step 2: Fetch all messages between user1 and user2
     const result = await pool.request()
       .input('user1', sql.Int, user1)
       .input('user2', sql.Int, user2)
@@ -40,7 +49,7 @@ app.get('/messages/:user1/:user2', async (req, res) => {
         SELECT * FROM messages
         WHERE (sender_id = @user1 AND receiver_id = @user2)
            OR (sender_id = @user2 AND receiver_id = @user1)
-        ORDER BY timestamp ASC
+        ORDER BY sent_at ASC
       `);
 
     res.status(200).json(result.recordset);
@@ -56,7 +65,7 @@ app.get('/conversations/:user1', async (req, res) => {
   const { user1 } = req.params;
   const query = `
     SELECT * FROM 
-      ( SELECT *, ROW_NUMBER() OVER ( PARTITION BY receiver_id ORDER BY timestamp DESC ) AS rn
+      ( SELECT *, ROW_NUMBER() OVER ( PARTITION BY receiver_id ORDER BY sent_at DESC ) AS rn
       FROM messages WHERE sender_id = @user1 ) AS temp
     WHERE rn = 1;
   `;
