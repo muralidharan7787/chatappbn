@@ -3,11 +3,11 @@ require('dotenv').config();
 
 
 const config = {
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,  // 🔐 Replace with actual password
-    server: process.env.DB_SERVER,
-    database: process.env.DB_DATABASE,
-    port: Number(process.env.DB_PORT),
+    user: "muralidharan@development-md",
+    password: "9363509@Murali",  // 🔐 Replace with actual password
+    server: "development-md.database.windows.net",
+    database: "development",
+    port: 1433,
     options: {
         encrypt: true, // ✅ for Azure
         trustServerCertificate: false,
