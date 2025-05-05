@@ -21,7 +21,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/user', userRoutes);
 
 app.get('/', (req, res) => {
-  res.send('Hello from ChatApp!');
+  res.send('Hello from ChatApp! 5.20');
 });
 
 // Fetch messages between two users
