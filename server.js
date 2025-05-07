@@ -15,6 +15,7 @@ app.use(cors());
 
 
 const userRoutes = require('./routes/userRoutes');
+const { log } = require('console');
 
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -184,7 +185,74 @@ io.on('connection', socket => {
     try {
       const pool = await sql.connect(dbConfig);
       const result = await pool.request().input('senderId', sql.Int, senderId).query(query);
+      console.log('inside the getlatess messages only',senderId);
+      console.log(result.recordset);
+
       socket.emit('latestMessages', result.recordset);
+
+      const filteredMessages = result.recordset.filter(msg =>
+        msg.receiver_id === Number(senderId) &&
+        (msg.status === 'delivered' || msg.status === 'sent')
+      );
+
+      for (const msg of filteredMessages) {
+        const query = `
+          SELECT *
+          FROM (
+              SELECT 
+                  temp.*,
+                  u.id AS other_user_id,
+                  u.name AS other_user_name,
+                  u.profile_image AS other_user_image
+              FROM (
+                  SELECT *, 
+                      ROW_NUMBER() OVER (
+                          PARTITION BY 
+                              CASE 
+                                  WHEN sender_id < receiver_id THEN 
+                                      CAST(sender_id AS VARCHAR) + '_' + CAST(receiver_id AS VARCHAR)
+                                  ELSE 
+                                      CAST(receiver_id AS VARCHAR) + '_' + CAST(sender_id AS VARCHAR)
+                              END
+                          ORDER BY sent_at DESC
+                      ) AS rn
+                  FROM messages
+                  WHERE sender_id = @senderId OR receiver_id = @senderId
+              ) AS temp
+              JOIN users u 
+                  ON u.id = CASE 
+                              WHEN temp.sender_id = @senderId THEN temp.receiver_id 
+                              ELSE temp.sender_id 
+                          END
+              WHERE temp.rn = 1
+          ) AS latest_messages
+          ORDER BY latest_messages.sent_at DESC;
+        `;
+      
+        try {
+          const pool = await sql.connect(dbConfig);
+          const latestResult = await pool
+            .request()
+            .input('senderId', sql.Int, msg.sender_id)
+            .query(query);
+
+      
+          // console.log('Latest messages for sender_id', msg.sender_id, latestResult.recordset);
+          const targetSocket = userSocketMap[String(msg.sender_id)];
+
+          if(targetSocket){
+            io.to(targetSocket).emit('latestMessages', latestResult.recordset);
+          }
+      
+          // Optional: emit or store these if needed
+          // socket.emit('latestMessagesForUser', latestResult.recordset);
+        } catch (err) {
+          console.error(`Error fetching latest messages for sender_id ${msg.sender_id}:`, err);
+        }
+      }
+      
+      console.log(filteredMessages,'filtered messsagesss--- ');
+      // socket.emit('latestMessages', result.recordset);
     } catch (err) {
       console.error('Error fetching latest messages:', err);
       socket.emit('error', 'Database error');
@@ -192,30 +260,85 @@ io.on('connection', socket => {
   });
 
   socket.on('conversations', async data => {
-    const { from, to, message } = data;
-    const targetSocket = userSocketMap[to];
+    const { user1, user2 } = data;
+
+    const targetSocket = userSocketMap[user2];
 
     try {
       const pool = await sql.connect(dbConfig);
-      await pool.request().input('from', sql.Int, from).input('to', sql.Int, to).input('message', sql.Text, message).query(
-        'INSERT INTO messages (sender_id, receiver_id, message, delivered) VALUES (@from, @to, @message, @delivered)',
-        { delivered: targetSocket ? 1 : 0 }
-      );
 
-      if (targetSocket) {
-        io.to(targetSocket).emit('private_message', { from, message });
-      }
+      // Step 1: Update messages from user2 to user1 to 'read'
+      await pool.request()
+        .input('sender_id', sql.Int, user2)
+        .input('receiver_id', sql.Int, user1)
+        .query(`
+          UPDATE messages
+          SET status = 'read'
+          WHERE sender_id = @sender_id AND receiver_id = @receiver_id AND status != 'read'
+        `);
+
+      // Step 2: Fetch all messages between user1 and user2
+      const result = await pool.request()
+        .input('user1', sql.Int, user1)
+        .input('user2', sql.Int, user2)
+        .query(`
+          SELECT * FROM messages
+          WHERE (sender_id = @user1 AND receiver_id = @user2)
+            OR (sender_id = @user2 AND receiver_id = @user1)
+          ORDER BY sent_at ASC
+        `);
       
-      console.log(`📨 ${from} ➡️ ${to}: ${message}`);
-    } catch (err) {
-      console.error('Error handling conversation:', err);
+      socket.emit('conversations', result.recordset);
+      if (targetSocket) {
+        const query = `
+          SELECT *
+          FROM (
+              SELECT 
+                  temp.*,
+                  u.id AS other_user_id,
+                  u.name AS other_user_name,
+                  u.profile_image AS other_user_image
+              FROM (
+                  SELECT *, 
+                      ROW_NUMBER() OVER (
+                          PARTITION BY 
+                              CASE 
+                                  WHEN sender_id < receiver_id THEN 
+                                      CAST(sender_id AS VARCHAR) + '_' + CAST(receiver_id AS VARCHAR)
+                                  ELSE 
+                                      CAST(receiver_id AS VARCHAR) + '_' + CAST(sender_id AS VARCHAR)
+                              END
+                          ORDER BY sent_at DESC
+                      ) AS rn
+                  FROM messages
+                  WHERE sender_id = @senderId OR receiver_id = @senderId
+              ) AS temp
+              JOIN users u 
+                  ON u.id = CASE 
+                              WHEN temp.sender_id = @senderId THEN temp.receiver_id 
+                              ELSE temp.sender_id 
+                          END
+              WHERE temp.rn = 1
+          ) AS latest_messages
+          ORDER BY latest_messages.sent_at DESC;
+        `;
+        const result = await pool.request().input('senderId', sql.Int, user2).query(query);
+        console.log('inside convo on');
+        io.to(targetSocket).emit('latestMessages', result.recordset);
+      }
+    } catch (error) {
+      console.error('Error fetching messages:', error);
     }
   });
 
   socket.on('private_message', async data => {
     const { from, to, message } = data;
+    console.log(typeof from, typeof to, typeof message);   
+    console.log(from,to,message);
     const targetSocket = userSocketMap[to];
     const senderSocket = userSocketMap[from];
+
+    console.log(userSocketMap, 'userSocketMappppp');
 
     try {
       const pool = await sql.connect(dbConfig);
@@ -223,6 +346,8 @@ io.on('connection', socket => {
       await pool.request().input('from', sql.Int, from).input('to', sql.Int, to).input('message', sql.Text, message).input('status', sql.VarChar, status).query(
         'INSERT INTO messages (sender_id, receiver_id, message, status) VALUES (@from, @to, @message, @status)'
       );
+
+      console.log(from, to, 'latest Messages occur before sending msg');
 
       if (targetSocket) {
         const query = `
@@ -238,22 +363,27 @@ io.on('connection', socket => {
                       ROW_NUMBER() OVER (
                           PARTITION BY 
                               CASE 
-                                  WHEN sender_id < receiver_id THEN CONCAT(sender_id, '_', receiver_id)
-                                  ELSE CONCAT(receiver_id, '_', sender_id)
+                                  WHEN sender_id < receiver_id THEN 
+                                      CAST(sender_id AS VARCHAR) + '_' + CAST(receiver_id AS VARCHAR)
+                                  ELSE 
+                                      CAST(receiver_id AS VARCHAR) + '_' + CAST(sender_id AS VARCHAR)
                               END
                           ORDER BY sent_at DESC
                       ) AS rn
                   FROM messages
-                  WHERE sender_id = @to OR receiver_id = @to
+                  WHERE sender_id = @senderId OR receiver_id = @senderId
               ) AS temp
               JOIN users u 
-                  ON u.id = IF(temp.sender_id = @to, temp.receiver_id, temp.sender_id)
+                  ON u.id = CASE 
+                              WHEN temp.sender_id = @senderId THEN temp.receiver_id 
+                              ELSE temp.sender_id 
+                          END
               WHERE temp.rn = 1
           ) AS latest_messages
           ORDER BY latest_messages.sent_at DESC;
         `;
-        
-        const result = await pool.request().input('to', sql.Int, to).query(query);
+        const result = await pool.request().input('senderId', sql.Int, to).query(query);
+        console.log(from,to,result.recordset,'latest Messages occur after sending msg');
         io.to(targetSocket).emit('latestMessages', result.recordset);
         io.to(targetSocket).emit('private_message', { from, message });
       }

@@ -127,6 +127,8 @@ const userModel = {
 
         const query = `INSERT INTO users (${keys.join(', ')}) VALUES (${placeholders.join(', ')})`;
 
+        console.log(query+values);
+
         try {
             const request = new sql.Request();
             for (const key in values) {
