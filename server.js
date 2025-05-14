@@ -7,6 +7,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const app = express();
+const admin = require('./firebase');
 
 // Configuring the MSSQL connection
 const dbConfig = require('./db');
@@ -19,6 +20,29 @@ const { log } = require('console');
 
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+app.post('/api/user/save-token', async (req, res) => {
+  const { user_id, fcm_token } = req.body;
+
+  if (!user_id || !fcm_token) {
+    return res.status(400).json({ message: 'Missing user_id or fcm_token' });
+  }
+
+  try {
+    const pool = await sql.connect(dbConfig); // Ensure db.connect() returns a connected pool
+    await pool.request()
+      .input('fcm_token', sql.VarChar, fcm_token)
+      .input('user_id', sql.Int, user_id)
+      .query('UPDATE users SET fcm_token = @fcm_token WHERE id = @user_id');
+
+    res.json({ message: 'Token saved successfully' });
+  } catch (err) {
+    console.error('Error saving token:', err);
+    res.status(500).json({ message: 'Error saving token' });
+  }
+});
+
+
 app.use('/api/user', userRoutes);
 
 app.get('/', (req, res) => {
@@ -195,7 +219,8 @@ io.on('connection', socket => {
         (msg.status === 'delivered' || msg.status === 'sent')
       );
 
-      for (const msg of filteredMessages) {
+      if (filteredMessages.length > 0){
+        for (const msg of filteredMessages) {
         const query = `
           SELECT *
           FROM (
@@ -252,6 +277,10 @@ io.on('connection', socket => {
       }
       
       console.log(filteredMessages,'filtered messsagesss--- ');
+
+      }
+
+      
       // socket.emit('latestMessages', result.recordset);
     } catch (err) {
       console.error('Error fetching latest messages:', err);
@@ -387,6 +416,34 @@ io.on('connection', socket => {
         io.to(targetSocket).emit('latestMessages', result.recordset);
         io.to(targetSocket).emit('private_message', { from, message });
       }
+      
+      if (!targetSocket) {
+        const pool = await sql.connect(dbConfig);
+        const tokenResult = await pool.request()
+          .input('to', sql.Int, to)
+          .query('SELECT fcm_token FROM users WHERE id = @to');
+
+        const fcmToken = tokenResult.recordset[0]?.fcm_token;
+
+        if (fcmToken) {
+          const payload = {
+            notification: {
+              title: 'New Message',
+              body: `${message}`
+            },
+            token: fcmToken
+          };
+
+          try {
+            await admin.messaging().send(payload);
+            console.log('📩 Push notification sent to offline user.');
+          } catch (err) {
+            console.error('❌ Error sending push notification:', err);
+          }
+        }
+      }
+
+
       
     } catch (err) {
       console.error('Error sending private message:', err);
