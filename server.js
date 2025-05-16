@@ -7,6 +7,8 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const app = express();
+console.log("Current server time:", new Date().toISOString());
+
 const admin = require('./firebase');
 
 // Configuring the MSSQL connection
