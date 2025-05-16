@@ -16,7 +16,6 @@ const dbConfig = require('./db');
 
 app.use(cors());
 
-
 const userRoutes = require('./routes/userRoutes');
 const { log } = require('console');
 
@@ -72,7 +71,7 @@ app.post('/api/updateStatus', async (req, res) => {
 app.use('/api/user', userRoutes);
 
 app.get('/', (req, res) => {
-  res.send('Hello from ChatApp! 5.20');
+  res.send('Hello from ChatApp! 09.44');
 });
 
 // Fetch messages between two users
