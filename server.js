@@ -475,14 +475,13 @@ io.on('connection', socket => {
 
         if (fcmToken) {
           const payload = {
-            notification: {
-              title: 'New message from '+ name,
-              body: `${message}`
-            },
-            token: fcmToken,
             data: {
+              title: 'New message from '+ name,
+              body: `${message}`,
+              icon: 'noti_icon',
               message_id: insertedMessageId?.toString() ?? ''
             },
+            token: fcmToken
           };
 
           try {
