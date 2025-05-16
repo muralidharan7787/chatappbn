@@ -476,7 +476,7 @@ io.on('connection', socket => {
         if (fcmToken) {
           const payload = {
             notification: {
-              title: 'New Message from '+ name,
+              title: 'New message from '+ name,
               body: `${message}`
             },
             token: fcmToken,
