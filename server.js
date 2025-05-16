@@ -42,6 +42,30 @@ app.post('/api/user/save-token', async (req, res) => {
   }
 });
 
+app.post('/api/updateStatus', async (req, res) => {
+  const {message_id } = req.body;
+
+  // Validate presence of sender_id and receiver_id
+  if (!message_id) {
+    return res.status(400).json({ message: 'Missing sender_id or receiver_id' });
+  }
+
+  try {
+    const pool = await sql.connect(dbConfig);
+    await pool.request()
+      .input('message_id', sql.Int, message_id)
+      .query(`
+        UPDATE messages
+        SET status = 'delivered'
+        WHERE id = @message_id
+      `);
+
+    res.json({ message: 'Status updated to delivered successfully' });
+  } catch (err) {
+    console.error('Error updating status:', err);
+    res.status(500).json({ message: 'Error updating status' });
+  }
+});
 
 app.use('/api/user', userRoutes);
 
@@ -372,9 +396,26 @@ io.on('connection', socket => {
     try {
       const pool = await sql.connect(dbConfig);
       const status = targetSocket ? 'delivered' : 'sent';
-      await pool.request().input('from', sql.Int, from).input('to', sql.Int, to).input('message', sql.Text, message).input('status', sql.VarChar, status).query(
-        'INSERT INTO messages (sender_id, receiver_id, message, status) VALUES (@from, @to, @message, @status)'
-      );
+      const insert = await pool.request()
+        .input('from', sql.Int, from)
+        .input('to', sql.Int, to)
+        .input('message', sql.Text, message)
+        .input('status', sql.VarChar, status)
+        .query(`
+          INSERT INTO messages (sender_id, receiver_id, message, status)
+          OUTPUT INSERTED.*
+          VALUES (@from, @to, @message, @status)
+        `);
+
+      let insertedMessageId = null;
+
+      if (insert.recordset && insert.recordset.length > 0) {
+        insertedMessageId = insert.recordset[0].id;
+        console.log(insertedMessageId, 'InsertedMessaggeId');
+        // proceed
+      } else {
+        console.error("Insert succeeded but no record returned");
+      }
 
       console.log(from, to, 'latest Messages occur before sending msg');
 
@@ -425,13 +466,22 @@ io.on('connection', socket => {
 
         const fcmToken = tokenResult.recordset[0]?.fcm_token;
 
+        const fromName = await pool.request()
+          .input('from', sql.Int, from)
+          .query('SELECT name FROM users WHERE id = @from');
+
+        const name = fromName.recordset[0]?.name;
+
         if (fcmToken) {
           const payload = {
             notification: {
-              title: 'New Message from '+ from,
+              title: 'New Message from '+ name,
               body: `${message}`
             },
-            token: fcmToken
+            token: fcmToken,
+            data: {
+              message_id: insertedMessageId?.toString() ?? ''
+            },
           };
 
           try {
