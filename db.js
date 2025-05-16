@@ -1,31 +1,6 @@
 const sql = require('mssql');
 require('dotenv').config();
 
-
-// const config = {
-//     user: "muralidharan@development-md",
-//     password: "9363509@Murali",  // 🔐 Replace with actual password
-//     server: "development-md.database.windows.net",
-//     database: "development",
-//     port: 1433,
-//     options: {
-//         encrypt: true, // ✅ for Azure
-//         trustServerCertificate: false,
-//     }
-// };
-
-// const config = {
-//     user: "muralidharan@development-md",
-//     password: process.env.DB_PASSWORD,  // 🔐 Replace with actual password
-//     server: "development-md.database.windows.net",
-//     database: "chatapp-db",
-//     port: 1433,
-//     options: {
-//         encrypt: true, // ✅ for Azure
-//         trustServerCertificate: false,
-//     }
-// };
-
 const config = {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,  // 🔐 Replace with actual password
