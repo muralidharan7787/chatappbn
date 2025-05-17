@@ -469,17 +469,19 @@ io.on('connection', socket => {
 
         const fromName = await pool.request()
           .input('from', sql.Int, from)
-          .query('SELECT name FROM users WHERE id = @from');
+          .query('SELECT name, profile_image FROM users WHERE id = @from');
 
         const name = fromName.recordset[0]?.name;
+        const profile_image = fromName.recordset[0]?.profile_image;
 
         if (fcmToken) {
           const payload = {
             data: {
               title: 'New message from '+ name,
               body: `${message}`,
-              icon: 'noti_icon',
-              message_id: insertedMessageId?.toString() ?? ''
+              icon: 'logo',
+              message_id: insertedMessageId?.toString() ?? '',
+              profile_image: profile_image,
             },
             token: fcmToken
           };
