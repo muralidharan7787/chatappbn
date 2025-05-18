@@ -479,7 +479,7 @@ io.on('connection', socket => {
             data: {
               title: 'New message from '+ name,
               body: `${message}`,
-              icon: 'logo',
+              icon: 'noti_icon',
               message_id: insertedMessageId?.toString() ?? '',
               profile_image: profile_image,
             },
