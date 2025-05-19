@@ -19,6 +19,11 @@ app.use(cors());
 const userRoutes = require('./routes/userRoutes');
 const { log } = require('console');
 
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: '*' },
+});// userId -> socket.id
+
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
@@ -43,8 +48,13 @@ app.post('/api/user/save-token', async (req, res) => {
   }
 });
 
+const userSocketMap = {}; 
+
 app.post('/api/updateStatus', async (req, res) => {
-  const {message_id } = req.body;
+  const {message_id, from } = req.body;
+  console.log('indho to id -----', from);
+  const targetSocket = userSocketMap[from];
+  console.log('indho targetsocket id -----', targetSocket);
 
   // Validate presence of sender_id and receiver_id
   if (!message_id) {
@@ -60,6 +70,115 @@ app.post('/api/updateStatus', async (req, res) => {
         SET status = 'delivered'
         WHERE id = @message_id
       `);
+
+    if (targetSocket) {
+      const query = `
+        SELECT *
+        FROM (
+            SELECT 
+                temp.*,
+                u.id AS other_user_id,
+                u.name AS other_user_name,
+                u.profile_image AS other_user_image
+            FROM (
+                SELECT *, 
+                    ROW_NUMBER() OVER (
+                        PARTITION BY 
+                            CASE 
+                                WHEN sender_id < receiver_id THEN 
+                                    CAST(sender_id AS VARCHAR) + '_' + CAST(receiver_id AS VARCHAR)
+                                ELSE 
+                                    CAST(receiver_id AS VARCHAR) + '_' + CAST(sender_id AS VARCHAR)
+                            END
+                        ORDER BY sent_at DESC
+                    ) AS rn
+                FROM messages
+                WHERE sender_id = @senderId OR receiver_id = @senderId
+            ) AS temp
+            JOIN users u 
+                ON u.id = CASE 
+                            WHEN temp.sender_id = @senderId THEN temp.receiver_id 
+                            ELSE temp.sender_id 
+                        END
+            WHERE temp.rn = 1
+        ) AS latest_messages
+        ORDER BY latest_messages.sent_at DESC;
+      `;
+      const result = await pool.request().input('senderId', sql.Int, from).query(query);
+      console.log(from,result.recordset,'latest Messages occur after sending msg');
+      io.to(targetSocket).emit('latestMessages', result.recordset);
+      console.log('yeah its happening');
+      // io.to(targetSocket).emit('private_message', { from, message });
+    }
+
+    res.json({ message: 'Status updated to delivered successfully' });
+  } catch (err) {
+    console.error('Error updating status:', err);
+    res.status(500).json({ message: 'Error updating status' });
+  }
+});
+
+app.post('/api/updateStatusToRead', async (req, res) => {
+  const {from, to } = req.body;
+  console.log('indho to id -----', from);
+  const targetSocket = userSocketMap[from];
+  console.log('indho targetsocket id -----', targetSocket);
+
+  // Validate presence of sender_id and receiver_id
+
+
+  try {
+    const pool = await sql.connect(dbConfig);
+
+    // Step 1: Update messages from user2 to user1 to 'read'
+    await pool.request()
+      .input('sender_id', sql.Int, from)
+      .input('receiver_id', sql.Int, to)
+      .query(`
+        UPDATE messages
+        SET status = 'read'
+        WHERE sender_id = @sender_id AND receiver_id = @receiver_id AND status != 'read'
+      `);
+
+    if (targetSocket) {
+      const query = `
+        SELECT *
+        FROM (
+            SELECT 
+                temp.*,
+                u.id AS other_user_id,
+                u.name AS other_user_name,
+                u.profile_image AS other_user_image
+            FROM (
+                SELECT *, 
+                    ROW_NUMBER() OVER (
+                        PARTITION BY 
+                            CASE 
+                                WHEN sender_id < receiver_id THEN 
+                                    CAST(sender_id AS VARCHAR) + '_' + CAST(receiver_id AS VARCHAR)
+                                ELSE 
+                                    CAST(receiver_id AS VARCHAR) + '_' + CAST(sender_id AS VARCHAR)
+                            END
+                        ORDER BY sent_at DESC
+                    ) AS rn
+                FROM messages
+                WHERE sender_id = @senderId OR receiver_id = @senderId
+            ) AS temp
+            JOIN users u 
+                ON u.id = CASE 
+                            WHEN temp.sender_id = @senderId THEN temp.receiver_id 
+                            ELSE temp.sender_id 
+                        END
+            WHERE temp.rn = 1
+        ) AS latest_messages
+        ORDER BY latest_messages.sent_at DESC;
+      `;
+      const result = await pool.request().input('senderId', sql.Int, from).query(query);
+      console.log(from,result.recordset,'latest Messages occur after sending msg');
+      io.to(targetSocket).emit('latestMessages', result.recordset);
+      console.log('yeah its happening');
+      // io.to(targetSocket).emit('private_message', { from, message });
+    }
 
     res.json({ message: 'Status updated to delivered successfully' });
   } catch (err) {
@@ -163,13 +282,6 @@ app.get('/findall', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: '*' },
-});
-
-const userSocketMap = {}; // userId -> socket.id
 
 io.on('connection', socket => {
   console.log(`🔌 Connected: ${socket.id}`);
@@ -482,6 +594,7 @@ io.on('connection', socket => {
               icon: 'noti_icon',
               message_id: insertedMessageId?.toString() ?? '',
               profile_image: profile_image,
+              sender_id: from?.toString() ?? ''
             },
             token: fcmToken
           };
