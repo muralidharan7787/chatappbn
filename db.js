@@ -10,7 +10,7 @@ const config = {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,  // 🔐 Replace with actual password
     // server: process.env.DB_SERVER,
-    server: development-md.database.windows.net,
+    server: "development-md.database.windows.net",
     database: process.env.DB_DATABASE,
     port: 1433,
     options: {
