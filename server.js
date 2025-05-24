@@ -1,7 +1,7 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const sql = require('mssql');
+const { Pool } = require('pg');
 const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
@@ -11,8 +11,16 @@ console.log("Current server time:", new Date().toISOString());
 
 const admin = require('./firebase');
 
-// Configuring the MSSQL connection
-const dbConfig = require('./db');
+// Configuring the PostgreSQL connection
+// const dbConfig = {
+//   user: 'your_username',
+//   host: 'localhost',
+//   database: 'your_database',
+//   password: 'your_password',
+//   port: 5432,
+// };
+
+const pool = require('./db.js');
 
 app.use(cors());
 
@@ -22,7 +30,7 @@ const { log } = require('console');
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: '*' },
-});// userId -> socket.id
+});
 
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -35,11 +43,10 @@ app.post('/api/user/save-token', async (req, res) => {
   }
 
   try {
-    const pool = await sql.connect(dbConfig); // Ensure db.connect() returns a connected pool
-    await pool.request()
-      .input('fcm_token', sql.VarChar, fcm_token)
-      .input('user_id', sql.Int, user_id)
-      .query('UPDATE users SET fcm_token = @fcm_token WHERE id = @user_id');
+    await pool.query(
+      'UPDATE users SET fcm_token = $1 WHERE id = $2',
+      [fcm_token, user_id]
+    );
 
     res.json({ message: 'Token saved successfully' });
   } catch (err) {
@@ -56,20 +63,17 @@ app.post('/api/updateStatus', async (req, res) => {
   const targetSocket = userSocketMap[from];
   console.log('indho targetsocket id -----', targetSocket);
 
-  // Validate presence of sender_id and receiver_id
   if (!message_id) {
     return res.status(400).json({ message: 'Missing sender_id or receiver_id' });
   }
 
   try {
-    const pool = await sql.connect(dbConfig);
-    await pool.request()
-      .input('message_id', sql.Int, message_id)
-      .query(`
-        UPDATE messages
-        SET status = 'delivered'
-        WHERE id = @message_id
-      `);
+    await pool.query(
+      `UPDATE messages
+       SET status = 'delivered'
+       WHERE id = $1`,
+      [message_id]
+    );
 
     if (targetSocket) {
       const query = `
@@ -86,29 +90,28 @@ app.post('/api/updateStatus', async (req, res) => {
                         PARTITION BY 
                             CASE 
                                 WHEN sender_id < receiver_id THEN 
-                                    CAST(sender_id AS VARCHAR) + '_' + CAST(receiver_id AS VARCHAR)
+                                    CAST(sender_id AS TEXT) || '_' || CAST(receiver_id AS TEXT)
                                 ELSE 
-                                    CAST(receiver_id AS VARCHAR) + '_' + CAST(sender_id AS VARCHAR)
+                                    CAST(receiver_id AS TEXT) || '_' || CAST(sender_id AS TEXT)
                             END
                         ORDER BY sent_at DESC
                     ) AS rn
                 FROM messages
-                WHERE sender_id = @senderId OR receiver_id = @senderId
+                WHERE sender_id = $1 OR receiver_id = $1
             ) AS temp
             JOIN users u 
                 ON u.id = CASE 
-                            WHEN temp.sender_id = @senderId THEN temp.receiver_id 
+                            WHEN temp.sender_id = $1 THEN temp.receiver_id 
                             ELSE temp.sender_id 
                         END
             WHERE temp.rn = 1
         ) AS latest_messages
         ORDER BY latest_messages.sent_at DESC;
       `;
-      const result = await pool.request().input('senderId', sql.Int, from).query(query);
-      console.log(from,result.recordset,'latest Messages occur after sending msg');
-      io.to(targetSocket).emit('latestMessages', result.recordset);
+      const result = await pool.query(query, [from]);
+      console.log(from,result.rows,'latest Messages occur after sending msg');
+      io.to(targetSocket).emit('latestMessages', result.rows);
       console.log('yeah its happening');
-      // io.to(targetSocket).emit('private_message', { from, message });
     }
 
     res.json({ message: 'Status updated to delivered successfully' });
@@ -124,21 +127,13 @@ app.post('/api/updateStatusToRead', async (req, res) => {
   const targetSocket = userSocketMap[from];
   console.log('indho targetsocket id -----', targetSocket);
 
-  // Validate presence of sender_id and receiver_id
-
-
   try {
-    const pool = await sql.connect(dbConfig);
-
-    // Step 1: Update messages from user2 to user1 to 'read'
-    await pool.request()
-      .input('sender_id', sql.Int, from)
-      .input('receiver_id', sql.Int, to)
-      .query(`
-        UPDATE messages
-        SET status = 'read'
-        WHERE sender_id = @sender_id AND receiver_id = @receiver_id AND status != 'read'
-      `);
+    await pool.query(
+      `UPDATE messages
+       SET status = 'read'
+       WHERE sender_id = $1 AND receiver_id = $2 AND status != 'read'`,
+      [from, to]
+    );
 
     if (targetSocket) {
       const query = `
@@ -155,29 +150,28 @@ app.post('/api/updateStatusToRead', async (req, res) => {
                         PARTITION BY 
                             CASE 
                                 WHEN sender_id < receiver_id THEN 
-                                    CAST(sender_id AS VARCHAR) + '_' + CAST(receiver_id AS VARCHAR)
+                                    CAST(sender_id AS TEXT) || '_' || CAST(receiver_id AS TEXT)
                                 ELSE 
-                                    CAST(receiver_id AS VARCHAR) + '_' + CAST(sender_id AS VARCHAR)
+                                    CAST(receiver_id AS TEXT) || '_' || CAST(sender_id AS TEXT)
                             END
                         ORDER BY sent_at DESC
                     ) AS rn
                 FROM messages
-                WHERE sender_id = @senderId OR receiver_id = @senderId
+                WHERE sender_id = $1 OR receiver_id = $1
             ) AS temp
             JOIN users u 
                 ON u.id = CASE 
-                            WHEN temp.sender_id = @senderId THEN temp.receiver_id 
+                            WHEN temp.sender_id = $1 THEN temp.receiver_id 
                             ELSE temp.sender_id 
                         END
             WHERE temp.rn = 1
         ) AS latest_messages
         ORDER BY latest_messages.sent_at DESC;
       `;
-      const result = await pool.request().input('senderId', sql.Int, from).query(query);
-      console.log(from,result.recordset,'latest Messages occur after sending msg');
-      io.to(targetSocket).emit('latestMessages', result.recordset);
+      const result = await pool.query(query, [from]);
+      console.log(from,result.rows,'latest Messages occur after sending msg');
+      io.to(targetSocket).emit('latestMessages', result.rows);
       console.log('yeah its happening');
-      // io.to(targetSocket).emit('private_message', { from, message });
     }
 
     res.json({ message: 'Status updated to delivered successfully' });
@@ -198,36 +192,29 @@ app.get('/messages/:user1/:user2', async (req, res) => {
   const { user1, user2 } = req.params;
 
   try {
-    const pool = await sql.connect(dbConfig);
-
     // Step 1: Update messages from user2 to user1 to 'read'
-    await pool.request()
-      .input('sender_id', sql.Int, user2)
-      .input('receiver_id', sql.Int, user1)
-      .query(`
-        UPDATE messages
-        SET status = 'read'
-        WHERE sender_id = @sender_id AND receiver_id = @receiver_id AND status != 'read'
-      `);
+    await pool.query(
+      `UPDATE messages
+       SET status = 'read'
+       WHERE sender_id = $1 AND receiver_id = $2 AND status != 'read'`,
+      [user2, user1]
+    );
 
     // Step 2: Fetch all messages between user1 and user2
-    const result = await pool.request()
-      .input('user1', sql.Int, user1)
-      .input('user2', sql.Int, user2)
-      .query(`
-        SELECT * FROM messages
-        WHERE (sender_id = @user1 AND receiver_id = @user2)
-           OR (sender_id = @user2 AND receiver_id = @user1)
-        ORDER BY sent_at ASC
-      `);
+    const result = await pool.query(
+      `SELECT * FROM messages
+       WHERE (sender_id = $1 AND receiver_id = $2)
+          OR (sender_id = $2 AND receiver_id = $1)
+       ORDER BY sent_at ASC`,
+      [user1, user2]
+    );
 
-    res.status(200).json(result.recordset);
+    res.status(200).json(result.rows);
   } catch (error) {
     console.error('Error fetching messages:', error);
     res.status(500).json({ error: 'Failed to fetch messages' });
   }
 });
-
 
 // Fetch latest conversations for a user
 app.get('/conversations/:user1', async (req, res) => {
@@ -235,14 +222,13 @@ app.get('/conversations/:user1', async (req, res) => {
   const query = `
     SELECT * FROM 
       ( SELECT *, ROW_NUMBER() OVER ( PARTITION BY receiver_id ORDER BY sent_at DESC ) AS rn
-      FROM messages WHERE sender_id = @user1 ) AS temp
+      FROM messages WHERE sender_id = $1 ) AS temp
     WHERE rn = 1;
   `;
   
   try {
-    const pool = await sql.connect(dbConfig);
-    const result = await pool.request().input('user1', sql.Int, user1).query(query);
-    res.json(result.recordset);
+    const result = await pool.query(query, [user1]);
+    res.json(result.rows);
   } catch (err) {
     console.error('Error:', err);
     res.status(500).json({ error: err.message });
@@ -252,17 +238,16 @@ app.get('/conversations/:user1', async (req, res) => {
 // Find a user by username
 app.get('/find/:user2', async (req, res) => {
   const { user2 } = req.params;
-  const query = `SELECT * FROM users WHERE username = @user2;`;
+  const query = `SELECT * FROM users WHERE username = $1;`;
   
   try {
-    const pool = await sql.connect(dbConfig);
-    const result = await pool.request().input('user2', sql.VarChar, user2).query(query);
+    const result = await pool.query(query, [user2]);
     
-    if (result.recordset.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(401).json({ message: "User not found" });
     }
     
-    return res.status(200).json({ message: `User: ${user2} found`, result: result.recordset });
+    return res.status(200).json({ message: `User: ${user2} found`, result: result.rows });
   } catch (err) {
     console.error('Error:', err);
     res.status(500).json({ error: err.message });
@@ -274,9 +259,8 @@ app.get('/findall', async (req, res) => {
   const query = `SELECT * FROM users;`;
   
   try {
-    const pool = await sql.connect(dbConfig);
-    const result = await pool.request().query(query);
-    res.json(result.recordset);
+    const result = await pool.query(query);
+    res.json(result.rows);
   } catch (err) {
     console.error('Error:', err);
     res.status(500).json({ error: err.message });
@@ -291,13 +275,12 @@ io.on('connection', socket => {
     userSocketMap[userId] = socket.id;
     
     try {
-      const pool = await sql.connect(dbConfig);
+      const result = await pool.query('SELECT id FROM users WHERE id = $1', [userId]);
       
-      const result = await pool.request().input('userId', sql.Int, userId).query('SELECT id FROM users WHERE id = @userId');
-      
-      if (result.recordset.length > 0) {
-        await pool.request().input('userId', sql.Int, userId).query(
-          "UPDATE messages SET status = 'delivered' WHERE receiver_id = @userId AND status = 'sent'"
+      if (result.rows.length > 0) {
+        await pool.query(
+          "UPDATE messages SET status = 'delivered' WHERE receiver_id = $1 AND status = 'sent'",
+          [userId]
         );
       } else {
         console.warn(`⚠️ User ID ${userId} not found in users table.`);
@@ -324,18 +307,18 @@ io.on('connection', socket => {
                       PARTITION BY 
                           CASE 
                               WHEN sender_id < receiver_id THEN 
-                                  CAST(sender_id AS VARCHAR) + '_' + CAST(receiver_id AS VARCHAR)
+                                  CAST(sender_id AS TEXT) || '_' || CAST(receiver_id AS TEXT)
                               ELSE 
-                                  CAST(receiver_id AS VARCHAR) + '_' + CAST(sender_id AS VARCHAR)
+                                  CAST(receiver_id AS TEXT) || '_' || CAST(sender_id AS TEXT)
                           END
                       ORDER BY sent_at DESC
                   ) AS rn
               FROM messages
-              WHERE sender_id = @senderId OR receiver_id = @senderId
+              WHERE sender_id = $1 OR receiver_id = $1
           ) AS temp
           JOIN users u 
               ON u.id = CASE 
-                          WHEN temp.sender_id = @senderId THEN temp.receiver_id 
+                          WHEN temp.sender_id = $1 THEN temp.receiver_id 
                           ELSE temp.sender_id 
                       END
           WHERE temp.rn = 1
@@ -344,14 +327,13 @@ io.on('connection', socket => {
     `;
     
     try {
-      const pool = await sql.connect(dbConfig);
-      const result = await pool.request().input('senderId', sql.Int, senderId).query(query);
+      const result = await pool.query(query, [senderId]);
       console.log('inside the getlatess messages only',senderId);
-      console.log(result.recordset);
+      console.log(result.rows);
 
-      socket.emit('latestMessages', result.recordset);
+      socket.emit('latestMessages', result.rows);
 
-      const filteredMessages = result.recordset.filter(msg =>
+      const filteredMessages = result.rows.filter(msg =>
         msg.receiver_id === Number(senderId) &&
         (msg.status === 'delivered' || msg.status === 'sent')
       );
@@ -372,18 +354,18 @@ io.on('connection', socket => {
                           PARTITION BY 
                               CASE 
                                   WHEN sender_id < receiver_id THEN 
-                                      CAST(sender_id AS VARCHAR) + '_' + CAST(receiver_id AS VARCHAR)
+                                      CAST(sender_id AS TEXT) || '_' || CAST(receiver_id AS TEXT)
                                   ELSE 
-                                      CAST(receiver_id AS VARCHAR) + '_' + CAST(sender_id AS VARCHAR)
+                                      CAST(receiver_id AS TEXT) || '_' || CAST(sender_id AS TEXT)
                               END
                           ORDER BY sent_at DESC
                       ) AS rn
                   FROM messages
-                  WHERE sender_id = @senderId OR receiver_id = @senderId
+                  WHERE sender_id = $1 OR receiver_id = $1
               ) AS temp
               JOIN users u 
                   ON u.id = CASE 
-                              WHEN temp.sender_id = @senderId THEN temp.receiver_id 
+                              WHEN temp.sender_id = $1 THEN temp.receiver_id 
                               ELSE temp.sender_id 
                           END
               WHERE temp.rn = 1
@@ -392,33 +374,20 @@ io.on('connection', socket => {
         `;
       
         try {
-          const pool = await sql.connect(dbConfig);
-          const latestResult = await pool
-            .request()
-            .input('senderId', sql.Int, msg.sender_id)
-            .query(query);
-
+          const latestResult = await pool.query(query, [msg.sender_id]);
       
-          // console.log('Latest messages for sender_id', msg.sender_id, latestResult.recordset);
           const targetSocket = userSocketMap[String(msg.sender_id)];
 
           if(targetSocket){
-            io.to(targetSocket).emit('latestMessages', latestResult.recordset);
+            io.to(targetSocket).emit('latestMessages', latestResult.rows);
           }
-      
-          // Optional: emit or store these if needed
-          // socket.emit('latestMessagesForUser', latestResult.recordset);
         } catch (err) {
           console.error(`Error fetching latest messages for sender_id ${msg.sender_id}:`, err);
         }
       }
       
       console.log(filteredMessages,'filtered messsagesss--- ');
-
       }
-
-      
-      // socket.emit('latestMessages', result.recordset);
     } catch (err) {
       console.error('Error fetching latest messages:', err);
       socket.emit('error', 'Database error');
@@ -431,30 +400,24 @@ io.on('connection', socket => {
     const targetSocket = userSocketMap[user2];
 
     try {
-      const pool = await sql.connect(dbConfig);
-
       // Step 1: Update messages from user2 to user1 to 'read'
-      await pool.request()
-        .input('sender_id', sql.Int, user2)
-        .input('receiver_id', sql.Int, user1)
-        .query(`
-          UPDATE messages
-          SET status = 'read'
-          WHERE sender_id = @sender_id AND receiver_id = @receiver_id AND status != 'read'
-        `);
+      await pool.query(
+        `UPDATE messages
+         SET status = 'read'
+         WHERE sender_id = $1 AND receiver_id = $2 AND status != 'read'`,
+        [user2, user1]
+      );
 
       // Step 2: Fetch all messages between user1 and user2
-      const result = await pool.request()
-        .input('user1', sql.Int, user1)
-        .input('user2', sql.Int, user2)
-        .query(`
-          SELECT * FROM messages
-          WHERE (sender_id = @user1 AND receiver_id = @user2)
-            OR (sender_id = @user2 AND receiver_id = @user1)
-          ORDER BY sent_at ASC
-        `);
+      const result = await pool.query(
+        `SELECT * FROM messages
+         WHERE (sender_id = $1 AND receiver_id = $2)
+           OR (sender_id = $2 AND receiver_id = $1)
+         ORDER BY sent_at ASC`,
+        [user1, user2]
+      );
       
-      socket.emit('conversations', result.recordset);
+      socket.emit('conversations', result.rows);
       if (targetSocket) {
         const query = `
           SELECT *
@@ -470,27 +433,27 @@ io.on('connection', socket => {
                           PARTITION BY 
                               CASE 
                                   WHEN sender_id < receiver_id THEN 
-                                      CAST(sender_id AS VARCHAR) + '_' + CAST(receiver_id AS VARCHAR)
+                                      CAST(sender_id AS TEXT) || '_' || CAST(receiver_id AS TEXT)
                                   ELSE 
-                                      CAST(receiver_id AS VARCHAR) + '_' + CAST(sender_id AS VARCHAR)
+                                      CAST(receiver_id AS TEXT) || '_' || CAST(sender_id AS TEXT)
                               END
                           ORDER BY sent_at DESC
                       ) AS rn
                   FROM messages
-                  WHERE sender_id = @senderId OR receiver_id = @senderId
+                  WHERE sender_id = $1 OR receiver_id = $1
               ) AS temp
               JOIN users u 
                   ON u.id = CASE 
-                              WHEN temp.sender_id = @senderId THEN temp.receiver_id 
+                              WHEN temp.sender_id = $1 THEN temp.receiver_id 
                               ELSE temp.sender_id 
                           END
               WHERE temp.rn = 1
           ) AS latest_messages
           ORDER BY latest_messages.sent_at DESC;
         `;
-        const result = await pool.request().input('senderId', sql.Int, user2).query(query);
+        const result = await pool.query(query, [user2]);
         console.log('inside convo on');
-        io.to(targetSocket).emit('latestMessages', result.recordset);
+        io.to(targetSocket).emit('latestMessages', result.rows);
       }
     } catch (error) {
       console.error('Error fetching messages:', error);
@@ -507,25 +470,19 @@ io.on('connection', socket => {
     console.log(userSocketMap, 'userSocketMappppp');
 
     try {
-      const pool = await sql.connect(dbConfig);
       const status = targetSocket ? 'delivered' : 'sent';
-      const insert = await pool.request()
-        .input('from', sql.Int, from)
-        .input('to', sql.Int, to)
-        .input('message', sql.Text, message)
-        .input('status', sql.VarChar, status)
-        .query(`
-          INSERT INTO messages (sender_id, receiver_id, message, status)
-          OUTPUT INSERTED.*
-          VALUES (@from, @to, @message, @status)
-        `);
+      const insert = await pool.query(
+        `INSERT INTO messages (sender_id, receiver_id, message, status)
+         VALUES ($1, $2, $3, $4)
+         RETURNING *`,
+        [from, to, message, status]
+      );
 
       let insertedMessageId = null;
 
-      if (insert.recordset && insert.recordset.length > 0) {
-        insertedMessageId = insert.recordset[0].id;
+      if (insert.rows && insert.rows.length > 0) {
+        insertedMessageId = insert.rows[0].id;
         console.log(insertedMessageId, 'InsertedMessaggeId');
-        // proceed
       } else {
         console.error("Insert succeeded but no record returned");
       }
@@ -547,44 +504,45 @@ io.on('connection', socket => {
                           PARTITION BY 
                               CASE 
                                   WHEN sender_id < receiver_id THEN 
-                                      CAST(sender_id AS VARCHAR) + '_' + CAST(receiver_id AS VARCHAR)
+                                      CAST(sender_id AS TEXT) || '_' || CAST(receiver_id AS TEXT)
                                   ELSE 
-                                      CAST(receiver_id AS VARCHAR) + '_' + CAST(sender_id AS VARCHAR)
+                                      CAST(receiver_id AS TEXT) || '_' || CAST(sender_id AS TEXT)
                               END
                           ORDER BY sent_at DESC
                       ) AS rn
                   FROM messages
-                  WHERE sender_id = @senderId OR receiver_id = @senderId
+                  WHERE sender_id = $1 OR receiver_id = $1
               ) AS temp
               JOIN users u 
                   ON u.id = CASE 
-                              WHEN temp.sender_id = @senderId THEN temp.receiver_id 
+                              WHEN temp.sender_id = $1 THEN temp.receiver_id 
                               ELSE temp.sender_id 
                           END
               WHERE temp.rn = 1
           ) AS latest_messages
           ORDER BY latest_messages.sent_at DESC;
         `;
-        const result = await pool.request().input('senderId', sql.Int, to).query(query);
-        console.log(from,to,result.recordset,'latest Messages occur after sending msg');
-        io.to(targetSocket).emit('latestMessages', result.recordset);
+        const result = await pool.query(query, [to]);
+        console.log(from,to,result.rows,'latest Messages occur after sending msg');
+        io.to(targetSocket).emit('latestMessages', result.rows);
         io.to(targetSocket).emit('private_message', { from, message });
       }
       
       if (!targetSocket) {
-        const pool = await sql.connect(dbConfig);
-        const tokenResult = await pool.request()
-          .input('to', sql.Int, to)
-          .query('SELECT fcm_token FROM users WHERE id = @to');
+        const tokenResult = await pool.query(
+          'SELECT fcm_token FROM users WHERE id = $1',
+          [to]
+        );
 
-        const fcmToken = tokenResult.recordset[0]?.fcm_token;
+        const fcmToken = tokenResult.rows[0]?.fcm_token;
 
-        const fromName = await pool.request()
-          .input('from', sql.Int, from)
-          .query('SELECT name, profile_image FROM users WHERE id = @from');
+        const fromName = await pool.query(
+          'SELECT name, profile_image FROM users WHERE id = $1',
+          [from]
+        );
 
-        const name = fromName.recordset[0]?.name;
-        const profile_image = fromName.recordset[0]?.profile_image;
+        const name = fromName.rows[0]?.name;
+        const profile_image = fromName.rows[0]?.profile_image;
 
         if (fcmToken) {
           const payload = {
@@ -593,7 +551,7 @@ io.on('connection', socket => {
               body: `${message}`,
               icon: 'noti_icon',
               message_id: insertedMessageId?.toString() ?? '',
-              profile_image: profile_image,
+              profile_image: '',
               sender_id: from?.toString() ?? ''
             },
             token: fcmToken
@@ -607,9 +565,6 @@ io.on('connection', socket => {
           }
         }
       }
-
-
-      
     } catch (err) {
       console.error('Error sending private message:', err);
     }

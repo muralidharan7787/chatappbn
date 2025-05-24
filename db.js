@@ -1,32 +1,22 @@
-const sql = require('mssql');
+const { Pool } = require('pg');
 require('dotenv').config();
 
-console.log(process.env.DB_SERVER,'---- server');
+// console.log(process.env.DB_CONSTR, '---- server');
 
-console.log(process.env.DB_USER, process.env.DB_PASSWORD, process.env.DB_DATABASE);
-
-
-const config = {
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,  // 🔐 Replace with actual password
-    // server: process.env.DB_SERVER,
-    server: "development-md.database.windows.net",
-    database: process.env.DB_DATABASE,
-    port: 1433,
-    options: {
-        encrypt: true, // ✅ for Azure
-        trustServerCertificate: false,
+const pool = new Pool({
+  connectionString: process.env.DB_CONSTR,
+    ssl: {
+      rejectUnauthorized: false // required for Render
     }
-};
+});
 
-sql.connect(config)
-  .then(pool => {
-    console.log('SQL Server Connected ✅');
-    // You can use pool.request() to run queries now
-    return pool;
+pool.connect()
+  .then(client => {
+    console.log('PostgreSQL Connected ✅');
+    client.release();
   })
   .catch(err => {
-    console.error('❌ SQL Connection Error:', err);
+    console.error('❌ PostgreSQL Connection Error:', err);
   });
 
-module.exports = sql;
+module.exports = pool;
