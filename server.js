@@ -35,6 +35,41 @@ const io = new Server(server, {
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+app.post('/device-info', async (req, res) => {
+  const {
+    platform, model, manufacturer, version, sdkInt,
+    device, brand, name, systemVersion, systemName
+  } = req.body;
+
+  try {
+    await pool.query(
+      `INSERT INTO device_info (
+        platform, model, manufacturer, version, sdk_int,
+        device, brand, name, system_version, system_name
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        platform, model, manufacturer, version, sdkInt,
+        device, brand, name, systemVersion, systemName
+      ]
+    );
+    res.status(200).json({ message: 'Device info saved successfully' });
+  } catch (error) {
+    console.error('Error inserting device info:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// ✅ GET: Get all device info
+app.get('/device-info', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM device_info ORDER BY created_at DESC');
+    res.status(200).json(result.rows);
+  } catch (error) {
+    console.error('Error fetching device info:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
 app.post('/api/user/save-token', async (req, res) => {
   const { user_id, fcm_token } = req.body;
 
